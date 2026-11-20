@@ -1,0 +1,11 @@
+tags:
+  # Tests that start a scratch hc core of their own, which needs `hc` on
+  # PATH or in HC_BIN: run them with `dart test -P hc`.
+  hc:
+    skip: 'starts a scratch hc core; run with `dart test -P hc`'
+
+presets:
+  hc:
+    tags:
+      hc:
+        skip: false

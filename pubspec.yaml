@@ -1,0 +1,19 @@
+name: hc_client
+description: >-
+  An unofficial Dart client for herdr-core (hc): typed calls on its terminals,
+  a live mirror of them that survives reconnects and core restarts, and fakes
+  for testing.
+version: 0.1.0
+repository: https://github.com/marcelomendoncasoares/hc_client
+topics:
+  - herdr
+  - terminal
+  - agents
+  - json-rpc
+
+environment:
+  sdk: ^3.8.0
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.5
