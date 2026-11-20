@@ -2,6 +2,7 @@
 
 ## 0.2.0
 
+- First release on pub.dev.
 - `attach`, on `HcGateway` and `HcConnection`: a viewer of a terminal that
   only watches, never typing or resizing. Its `events` bring the terminal's
   size (`HcResize`), its current screen and then its live output, colours

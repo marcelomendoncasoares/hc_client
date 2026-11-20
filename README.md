@@ -1,5 +1,11 @@
 # hc_client
 
+[![GitHub](https://img.shields.io/badge/GitHub-marcelomendoncasoares-181717.svg?style=flat&logo=github)](https://github.com/marcelomendoncasoares)
+[![Pub Package](https://img.shields.io/pub/v/hc_client.svg)](https://pub.dev/packages/hc_client)
+[![Dart SDK Version](https://badgen.net/pub/sdk-version/hc_client)](https://pub.dev/packages/hc_client)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/marcelomendoncasoares/hc_client/blob/main/LICENSE)
+[![CI](https://github.com/marcelomendoncasoares/hc_client/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/marcelomendoncasoares/hc_client/actions/workflows/ci.yaml)
+
 An unofficial Dart client for [herdr-core](https://herdr.dev/core) (`hc`),
 [herdr](https://herdr.dev)'s terminal runtime that keeps coding agents and
 other programs running, and reports what they're doing. It isn't made by
@@ -33,14 +39,8 @@ and it depends only on the Dart SDK.
 
 ## Install
 
-Until its first release on pub.dev:
-
-```yaml
-dependencies:
-  hc_client:
-    git:
-      url: https://github.com/marcelomendoncasoares/hc_client
-      ref: v0.2.0
+```sh
+dart pub add hc_client
 ```
 
 ## Use
