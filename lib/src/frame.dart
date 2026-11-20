@@ -3,8 +3,8 @@ import 'dart:typed_data';
 
 import 'errors.dart';
 
-/// The kinds of hc frames. The client uses DATA, CREDIT and CLOSE; the
-/// others belong to attach streams.
+/// The kinds of hc frames. The client uses DATA, CREDIT, CLOSE and, for a
+/// viewer, RESIZE; the others carry an attached viewer's input.
 abstract final class HcFrameKind {
   static const data = 0;
   static const credit = 1;

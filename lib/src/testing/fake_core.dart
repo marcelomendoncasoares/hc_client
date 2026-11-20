@@ -7,8 +7,8 @@ import '../frame.dart';
 
 /// An in-process stand-in for an hc core on a Unix socket: it shakes hands,
 /// answers `events.subscribe` with [seq] and [terminals], and `terminal.list`
-/// from [terminals], and lets a test push event-channel lines, drop
-/// connections and restart, at exact points.
+/// from [terminals], and lets a test push event-channel lines and stream
+/// frames, drop connections and restart, at exact points.
 ///
 /// It speaks the wire format as the real core does; this package's
 /// scratch-core tests check the gateway against the real one.
@@ -58,6 +58,14 @@ final class FakeHcCore {
       (method, params) => throw FakeHcError('unknown_method', method);
 
   static const noReply = Object();
+
+  /// Frames sent in the same write as a reply to the method named, after
+  /// it, such as a viewer's first output after `terminal.attach`'s reply.
+  Map<String, List<HcFrame>> afterReply = {};
+
+  /// Whether a client's CLOSE on a stream channel is answered with one, as
+  /// hc does once it let the viewer go.
+  bool echoClose = true;
 
   /// The event channel the subscribe reply names.
   static const eventChannel = 1;
@@ -162,6 +170,12 @@ final class FakeHcClient {
   /// The CREDIT the client sent for the event channel, in bytes.
   var credit = 0;
 
+  /// The CREDIT the client sent for each stream channel, in bytes.
+  final credits = <int, int>{};
+
+  /// The stream channels the client sent CLOSE on, in order.
+  final closes = <int>[];
+
   /// The DATA bytes sent to the client on the event channel.
   var sent = 0;
 
@@ -216,6 +230,13 @@ final class FakeHcClient {
       if (frame.channel == FakeHcCore.eventChannel &&
           frame.kind == HcFrameKind.credit) {
         credit += frame.credit;
+      } else if (frame.channel != 0 && frame.kind == HcFrameKind.credit) {
+        credits[frame.channel] = (credits[frame.channel] ?? 0) + frame.credit;
+      } else if (frame.channel != 0 && frame.kind == HcFrameKind.close) {
+        closes.add(frame.channel);
+        if (_core.echoClose) {
+          _write([HcFrame(frame.channel, HcFrameKind.close, Uint8List(0))]);
+        }
       } else if (frame.channel == 0 && frame.kind == HcFrameKind.data) {
         _onCall(
           (jsonDecode(utf8.decode(frame.payload)) as Map)
@@ -316,6 +337,7 @@ final class FakeHcClient {
     if (identical(result, FakeHcCore.noReply)) return;
     _write([
       HcFrame.rpc({'jsonrpc': '2.0', 'id': message['id'], 'result': result}),
+      ...?_core.afterReply[method],
     ]);
   }
 }

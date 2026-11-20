@@ -7,9 +7,10 @@ import 'errors.dart';
 import 'frame.dart';
 import 'notification.dart';
 import 'terminal.dart';
+import 'viewer.dart';
 
-/// One framed connection to an hc core: JSON-RPC on
-/// channel 0, and the event subscription on its own channel with credit.
+/// One framed connection to an hc core: JSON-RPC on channel 0, and the
+/// event subscription and each viewer on channels of their own, with credit.
 ///
 /// It only ever connects to an existing socket, so it never starts a core.
 final class HcConnection {
@@ -64,7 +65,17 @@ final class HcConnection {
   final _decoder = HcFrameDecoder();
   final _plain = BytesBuilder(copy: false);
   final _pending = <int, Completer<Object?>>{};
+
+  /// What a call whose reply opens a stream does with it, run as the reply
+  /// is read, before the frames after it: a viewer's first ones may come in
+  /// the same read.
+  final _opens = <int, void Function(Object? result)>{};
   final _channels = <int, _Channel>{};
+  final _viewers = <int, HcViewer>{};
+
+  /// The viewers this client closed, until hc's CLOSE says it let them go:
+  /// what hc sent before that is dropped.
+  final _closing = <int, Completer<void>>{};
   final _done = Completer<void>();
   Completer<Object?>? _hello;
   var _framed = false;
@@ -86,6 +97,13 @@ final class HcConnection {
     String method,
     Map<String, Object?> params, {
     Duration timeout = const Duration(seconds: 30),
+  }) => _call(method, params, timeout);
+
+  Future<Object?> _call(
+    String method,
+    Map<String, Object?> params,
+    Duration timeout, {
+    void Function(Object? result)? opens,
   }) {
     if (isClosed) {
       return Future.error(
@@ -98,6 +116,7 @@ final class HcConnection {
     final id = _nextId++;
     final completer = Completer<Object?>();
     _pending[id] = completer;
+    if (opens != null) _opens[id] = opens;
     _write(
       HcFrame.rpc({
         'jsonrpc': '2.0',
@@ -133,6 +152,67 @@ final class HcConnection {
       terminalsFromJson(result['terminals']),
       channel.controller.stream,
     );
+  }
+
+  /// `terminal.attach`, watching only: a viewer of [terminal]'s screen that
+  /// never types into it or resizes it, whatever the other viewers do. Its
+  /// [HcViewer.events] start with the screen as it is and follow it live.
+  ///
+  /// [history] adds that many lines of scrollback before the first paint
+  /// (on the main screen only). [caller] names the terminal calling, if one
+  /// does: hc refuses a terminal watching itself. Throws [HcException] as
+  /// hc refuses, such as `not_found` or `finished`, and as [call] does.
+  Future<HcViewer> attach(
+    String terminal, {
+    int history = 0,
+    String? caller,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    HcViewer? viewer;
+    Object? failure;
+    var abandoned = false;
+    try {
+      await _call(
+        'terminal.attach',
+        {
+          'terminal': terminal,
+          'observe': true,
+          'resize_notifications': true,
+          'history': history,
+          // hc needs a viewer's size, but a watching one's never counts.
+          'cols': 80,
+          'rows': 24,
+          'caller': ?caller,
+        },
+        timeout,
+        opens: (result) {
+          if (result is! Map || result['channel'] is! int) return;
+          final channel = result['channel'] as int;
+          // An answer that came after the call gave up: no one watches it.
+          if (abandoned) return unawaited(_closeViewer(channel));
+          final record = result['terminal'];
+          try {
+            viewer = _viewers[channel] = HcViewer._(
+              this,
+              channel,
+              record is Map ? record.cast<String, Object?>() : const {},
+              resizeNotifications: result['resize_notifications'] == true,
+            );
+          } on FormatException catch (error) {
+            failure = HcProtocolException(error.message);
+            unawaited(_closeViewer(channel));
+          }
+        },
+      );
+    } catch (_) {
+      abandoned = true;
+      rethrow;
+    }
+    if (failure case final failure?) throw failure;
+    return viewer ??
+        (throw const HcProtocolException(
+          'terminal.attach answered without a channel',
+        ));
   }
 
   /// Ends the connection. Pending calls fail with [HcUnavailableException].
@@ -235,6 +315,19 @@ final class HcConnection {
       if (frame.kind == HcFrameKind.close) close('hc closed the connection');
       return;
     }
+    final closing = _closing[frame.channel];
+    if (closing != null) {
+      if (frame.kind == HcFrameKind.close) {
+        _closing.remove(frame.channel);
+        closing.complete();
+      }
+      return;
+    }
+    final viewer = _viewers[frame.channel];
+    if (viewer != null) {
+      viewer._onFrame(frame);
+      return;
+    }
     final channel = _channel(frame.channel);
     switch (frame.kind) {
       case HcFrameKind.data:
@@ -262,9 +355,11 @@ final class HcConnection {
   void _onReply(Uint8List payload) {
     final message = jsonDecode(utf8.decode(payload));
     if (message is! Map || message['id'] is! int) return;
+    final error = message['error'];
+    final opens = _opens.remove(message['id']);
+    if (opens != null && error is! Map) opens(message['result']);
     final completer = _pending.remove(message['id']);
     if (completer == null) return;
-    final error = message['error'];
     if (error is Map) {
       completer.completeError(HcException.fromJson(error.cast()));
     } else {
@@ -273,6 +368,16 @@ final class HcConnection {
   }
 
   _Channel _channel(int number) => _channels.putIfAbsent(number, _Channel.new);
+
+  /// Sends CLOSE for [channel] and lets the viewer go: completes when hc
+  /// says it let go too, or the connection ends.
+  Future<void> _closeViewer(int channel) {
+    _viewers.remove(channel);
+    if (isClosed) return Future.value();
+    final closing = _closing[channel] ??= Completer<void>();
+    _write(HcFrame(channel, HcFrameKind.close, Uint8List(0)));
+    return closing.future;
+  }
 
   void _write(HcFrame frame) {
     if (isClosed) return;
@@ -295,6 +400,15 @@ final class HcConnection {
       completer.completeError(error);
     }
     _pending.clear();
+    _opens.clear();
+    for (final viewer in [..._viewers.values]) {
+      viewer._fail(error);
+    }
+    _viewers.clear();
+    for (final closing in _closing.values) {
+      closing.complete();
+    }
+    _closing.clear();
     for (final channel in _channels.values) {
       if (channel.controller.isClosed) continue;
       channel.controller.addError(error);
@@ -315,6 +429,104 @@ final class HcSubscription {
   /// Events, heartbeats and `missed`, in order. Ends with an
   /// [HcUnavailableException] when the channel or the connection closes.
   final Stream<HcNotification> notifications;
+}
+
+/// One viewer of a terminal, watching only, from [HcConnection.attach]:
+/// its output, its resizes and its end, in order.
+final class HcViewer {
+  HcViewer._(
+    this._connection,
+    this._channel,
+    Map<String, Object?> record, {
+    required this.resizeNotifications,
+  }) : terminal = HcTerminal.fromJson(record),
+       cols = record['cols'] is int ? record['cols'] as int : 0,
+       rows = record['rows'] is int ? record['rows'] as int : 0 {
+    _controller = StreamController<HcViewerEvent>(
+      // A listener that cancels lets the viewer go, without waiting on hc.
+      onCancel: () => unawaited(close()),
+    );
+    // Credit goes back as the listener takes each output, not as it comes
+    // in: a listener that pauses holds hc back, and past hc's limit gets a
+    // fresh paint in place of what it missed.
+    events = _controller.stream.map((event) {
+      if (event is HcOutput && !_ended && !_connection.isClosed) {
+        _connection._write(HcFrame.credit(_channel, event.bytes.length));
+      }
+      return event;
+    });
+  }
+
+  final HcConnection _connection;
+  final int _channel;
+  late final StreamController<HcViewerEvent> _controller;
+  var _ended = false;
+  Future<void>? _closed;
+
+  /// The terminal as it was when the viewer attached.
+  final HcTerminal terminal;
+
+  /// The terminal's size when the viewer attached, in cells.
+  final int cols;
+  final int rows;
+
+  /// Whether [events] carry each [HcResize]: always for a terminal on this
+  /// core. For one on another machine whose core can't relay them, they
+  /// don't, and [cols] and [rows] are all the viewer knows of its size.
+  final bool resizeNotifications;
+
+  /// What hc sends this viewer: an [HcResize] and the first paint, then the
+  /// live output. A single-subscription stream: listen once, at once.
+  ///
+  /// It ends after an [HcEnd] when the program ends, when [close] is
+  /// called or the listener cancels, and with an [HcUnavailableException]
+  /// when the connection goes or hc ends the stream for another reason.
+  late final Stream<HcViewerEvent> events;
+
+  /// Stops watching: [events] ends, and hc lets the viewer go. Completes
+  /// once hc says it did, or the connection is over.
+  Future<void> close() => _closed ??= _close();
+
+  Future<void> _close() async {
+    if (_ended) return;
+    _ended = true;
+    unawaited(_controller.close());
+    await _connection._closeViewer(_channel);
+  }
+
+  void _onFrame(HcFrame frame) {
+    if (_ended) return;
+    switch (frame.kind) {
+      case HcFrameKind.data:
+        _controller.add(HcOutput(frame.payload));
+      case HcFrameKind.resize when frame.payload.length == 4:
+        final size = ByteData.sublistView(frame.payload);
+        _controller.add(
+          HcResize(
+            size.getUint16(0, Endian.little),
+            size.getUint16(2, Endian.little),
+          ),
+        );
+      case HcFrameKind.close:
+        _connection._viewers.remove(_channel);
+        _ended = true;
+        if (frame.payload.isEmpty) {
+          _controller.addError(
+            const HcUnavailableException('hc ended the viewer\'s stream'),
+          );
+        } else {
+          _controller.add(HcEnd.fromPayload(frame.payload));
+        }
+        unawaited(_controller.close());
+    }
+  }
+
+  void _fail(Object error) {
+    if (_ended) return;
+    _ended = true;
+    _controller.addError(error);
+    unawaited(_controller.close());
+  }
 }
 
 final class _Channel {

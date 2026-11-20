@@ -18,6 +18,9 @@ and it depends only on the Dart SDK.
 - **Typed calls** on terminals: `run`, `get`, `list`, `send`, `keys`,
   `interrupt`, `kill`, `rm`, `label` and `read`. `call` reaches any other
   method of hc's API (`hc schema` prints it).
+- **`attach`**, a viewer that only watches: a terminal's screen as it is,
+  then its live output, colours included, for a terminal emulator to draw.
+  It never types or resizes, whatever the terminal's other viewers do.
 - **`HcConnection`**, one framed connection to a core: JSON-RPC requests, and
   the event subscription on its own channel, with credit.
 - **Typed errors.** `HcException` carries hc's stable `kind`, such as
@@ -37,7 +40,7 @@ dependencies:
   hc_client:
     git:
       url: https://github.com/marcelomendoncasoares/hc_client
-      ref: v0.1.0
+      ref: v0.2.0
 ```
 
 ## Use
@@ -72,6 +75,26 @@ Future<void> main() async {
   await gateway.send(agent.address, 'Explain this repository.');
 }
 ```
+
+To watch a terminal, as a terminal emulator would draw it:
+
+```dart
+final viewer = await gateway.attach(agent.address);
+await for (final event in viewer.events) {
+  switch (event) {
+    case HcResize(:final cols, :final rows):
+      print('the terminal is $cols × $rows');
+    case HcOutput(:final bytes):
+      stdout.add(bytes); // the screen first, then what it prints
+    case HcEnd(:final reason):
+      print('it ended: $reason');
+  }
+}
+```
+
+The viewer ends after `HcEnd`, on `viewer.close()` or a cancelled listener,
+and with `HcUnavailableException` when the connection goes: attach again once
+the gateway is back. Typing stays on `send` and `keys`.
 
 `example/hc_client_example.dart` follows a core's terminals and prints each
 status as it changes: `dart run example/hc_client_example.dart app=demo`.

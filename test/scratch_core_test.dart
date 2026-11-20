@@ -99,9 +99,11 @@ void main() {
           labels: demo,
         );
         final value = 'x' * 4096;
+        // 300 calls in turn: slower while other scratch cores run beside.
         final last = next<HcChanged>(
           gateway,
           (change) => change.terminal.labels['demo.big'] == '300$value',
+          const Duration(seconds: 30),
         );
         for (var i = 1; i <= 300; i++) {
           await gateway.label(terminal.address, {'demo.big': '$i$value'});

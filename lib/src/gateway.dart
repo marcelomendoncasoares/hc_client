@@ -244,6 +244,28 @@ final class HcGateway {
     return terminalsFromJson(listed is Map ? listed['terminals'] : null);
   }
 
+  /// `terminal.attach`, watching only: a viewer of [terminal]'s screen, on
+  /// the live connection, that never types into it or resizes it. Input
+  /// stays on [send] and [keys]. See [HcConnection.attach].
+  ///
+  /// The viewer ends with an [HcUnavailableException] when the connection
+  /// does: attach again once [connected].
+  Future<HcViewer> attach(
+    String terminal, {
+    int history = 0,
+    String? caller,
+    Duration timeout = defaultTimeout,
+  }) {
+    final connection = _connection;
+    if (connection == null) return Future.error(_notConnected);
+    return connection.attach(
+      terminal,
+      history: history,
+      caller: caller,
+      timeout: timeout,
+    );
+  }
+
   /// How long a call waits for hc's answer unless told otherwise: `run`
   /// and `send` wait 60 s, since hc answers them once the program runs or
   /// the text went in.
@@ -257,16 +279,14 @@ final class HcGateway {
     Duration timeout = defaultTimeout,
   }) {
     final connection = _connection;
-    if (connection == null) {
-      return Future.error(
-        const HcUnavailableException(
-          'the gateway is not connected to hc',
-          sent: false,
-        ),
-      );
-    }
+    if (connection == null) return Future.error(_notConnected);
     return connection.call(method, params, timeout: timeout);
   }
+
+  static const _notConnected = HcUnavailableException(
+    'the gateway is not connected to hc',
+    sent: false,
+  );
 
   Future<void> _run() async {
     while (!_stopped) {

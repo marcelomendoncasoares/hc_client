@@ -2,16 +2,18 @@ import 'dart:async';
 
 import 'package:hc_client/hc_client.dart';
 
-/// The gateway's next change of type [T] that passes [where]. Call it before
-/// the action that causes the change: the changes are not replayed.
+/// The gateway's next change of type [T] that passes [where], within
+/// [within]. Call it before the action that causes the change: the changes
+/// are not replayed.
 Future<T> next<T extends HcChange>(
   HcGateway gateway, [
   bool Function(T change)? where,
+  Duration within = const Duration(seconds: 5),
 ]) => gateway.changes
     .where((change) => change is T && (where?.call(change) ?? true))
     .cast<T>()
     .first
-    .timeout(const Duration(seconds: 5));
+    .timeout(within);
 
 /// Waits until [condition] holds, checking every 10 ms, for up to
 /// [within]; then fails naming [what] it waited for, when given.
