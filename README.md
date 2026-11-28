@@ -27,6 +27,8 @@ and it depends only on the Dart SDK.
 - **`attach`**, a viewer that only watches: a terminal's screen as it is,
   then its live output, colours included, for a terminal emulator to draw.
   It never types or resizes, whatever the terminal's other viewers do.
+  Attached with a `size`, a viewer sizes the terminal instead, and takes no
+  output.
 - **`HcConnection`**, one framed connection to a core: JSON-RPC requests, and
   the event subscription on its own channel, with credit.
 - **Typed errors.** `HcException` carries hc's stable `kind`, such as
@@ -95,6 +97,24 @@ await for (final event in viewer.events) {
 The viewer ends after `HcEnd`, on `viewer.close()` or a cancelled listener,
 and with `HcUnavailableException` when the connection goes: attach again once
 the gateway is back. Typing stays on `send` and `keys`.
+
+To size a terminal, as the window that shows it would:
+
+```dart
+final sizer = await gateway.attach(
+  agent.address,
+  size: (cols: 120, rows: 40),
+);
+sizer.resize(100, 30); // as the window narrows
+await sizer.close(); // the size goes back
+```
+
+The terminal takes the size of the sizing viewer that attached or resized
+last. As that one closes, it takes the last size of the one before, and with
+none left, hc's headless size, 200 × 120 unless set. Watching viewers get
+each new size as `HcResize`, then a fresh paint. A sizing viewer takes no
+output: the client credits what hc sends it and drops it, so hc holds no
+backlog for it, and its `events` bring only the program's end.
 
 `example/hc_client_example.dart` follows a core's terminals and prints each
 status as it changes: `dart run example/hc_client_example.dart app=demo`.

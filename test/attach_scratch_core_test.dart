@@ -34,8 +34,11 @@ void main() {
     labels: demo,
   );
 
+  /// [address]'s size, asked on the viewers' own connection: after every
+  /// RESIZE the gateway sent before, which hc reads in order.
   Future<(int, int)> sizeOf(String address) async {
-    final record = await core.hc(['get', address, '--json']);
+    final record =
+        await gateway.call('terminal.get', {'terminal': address}) as Map;
     return (record['cols'] as int, record['rows'] as int);
   }
 
@@ -116,6 +119,103 @@ void main() {
         expect(after.address, terminal.address);
         expect(gateway.connected, isTrue);
       });
+    });
+  });
+
+  group('Given a terminal with a watching viewer,', () {
+    late HcTerminal terminal;
+    late Watched watched;
+    late (int, int) headless;
+
+    setUpAll(() async {
+      terminal = await colouredCat();
+      await untilRead(gateway, terminal.address, 'ready');
+      headless = await sizeOf(terminal.address);
+      watched = Watched(await gateway.attach(terminal.address));
+      await watched.untilOutputHas('ready');
+    });
+
+    group('when sizing viewers attach, resize and close,', () {
+      late HcViewer first;
+      final sizes = <String, (int, int)>{};
+
+      setUpAll(() async {
+        final address = terminal.address;
+        first = await gateway.attach(address, size: (cols: 100, rows: 30));
+        sizes['first attached'] = await sizeOf(address);
+        first.resize(90, 25);
+        sizes['first resized'] = await sizeOf(address);
+        final second = await gateway.attach(
+          address,
+          size: (cols: 120, rows: 40),
+        );
+        sizes['second attached'] = await sizeOf(address);
+        await untilDone(second.close(), 'hc to let the second go');
+        sizes['second closed'] = await sizeOf(address);
+        await untilDone(first.close(), 'hc to let the first go');
+        sizes['first closed'] = await sizeOf(address);
+        await until(
+          () => watched.events.whereType<HcResize>().length == 6,
+          what: 'the watching viewer to see six sizes',
+        );
+      });
+
+      test('then the sizing viewer knows the size it attached with.', () {
+        expect((first.cols, first.rows), (100, 30));
+        expect(first.sizing, isTrue);
+      });
+
+      test('then the latest to attach or resize sized the terminal, and as '
+          'each went, the one before took it back.', () {
+        expect(sizes, {
+          'first attached': (100, 30),
+          'first resized': (90, 25),
+          'second attached': (120, 40),
+          'second closed': (90, 25),
+          'first closed': headless,
+        });
+      });
+
+      test('then the watching viewer saw each size, in order.', () {
+        expect(watched.events.whereType<HcResize>(), [
+          HcResize(headless.$1, headless.$2),
+          const HcResize(100, 30),
+          const HcResize(90, 25),
+          const HcResize(120, 40),
+          const HcResize(90, 25),
+          HcResize(headless.$1, headless.$2),
+        ]);
+      });
+    });
+  });
+
+  group('Given a sizing viewer of a terminal that prints 1 MB on a line, '
+      'then exits,', () {
+    late Watched sized;
+
+    setUpAll(() async {
+      final terminal = await gateway.run(
+        argv: ['sh', '-c', 'read line; yes | head -c 1000000; exit 3'],
+        cwd: core.home,
+        labels: demo,
+      );
+      sized = Watched(
+        await gateway.attach(terminal.address, size: (cols: 100, rows: 30)),
+      );
+      await gateway.send(terminal.address, 'go');
+      await untilDone(sized.ended, 'the sizing viewer to end');
+    });
+
+    test('then its events brought the end alone, after all that output.', () {
+      expect(sized.events, [
+        isA<HcEnd>()
+            .having((end) => end.reason, 'reason', 'exited')
+            .having((end) => end.exitCode, 'exitCode', 3),
+      ]);
+    });
+
+    test('then they end with no error.', () async {
+      expect(await sized.ended, isNull);
     });
   });
 

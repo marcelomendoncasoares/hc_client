@@ -26,6 +26,17 @@ final class HcFrame {
     (ByteData(4)..setUint32(0, bytes, Endian.little)).buffer.asUint8List(),
   );
 
+  /// A RESIZE frame: [cols] × [rows] cells, for a viewer on [channel].
+  factory HcFrame.resize(int channel, int cols, int rows) => HcFrame(
+    channel,
+    HcFrameKind.resize,
+    (ByteData(4)
+          ..setUint16(0, cols, Endian.little)
+          ..setUint16(2, rows, Endian.little))
+        .buffer
+        .asUint8List(),
+  );
+
   /// A DATA frame on channel 0 carrying one JSON-RPC message.
   factory HcFrame.rpc(Object message) => HcFrame(
     0,

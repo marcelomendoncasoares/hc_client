@@ -306,6 +306,146 @@ void main() {
     });
   });
 
+  group('Given a core that attaches a sizing viewer on channel 2,', () {
+    setUp(() {
+      core.onCall = (method, params) => attachResult(2, {
+        ...demoRecord('t1'),
+        'cols': 100,
+        'rows': 30,
+      }, resizeNotifications: false);
+      core.afterReply['terminal.attach'] = [outputFrame(2, 'paint')];
+    });
+
+    group('when it attaches to t1 at 100 × 30 with a caller, and hc sends '
+        'output,', () {
+      late HcViewer viewer;
+      late Watched watched;
+
+      setUp(() async {
+        viewer = await gateway.attach(
+          't1',
+          size: (cols: 100, rows: 30),
+          caller: 't9',
+        );
+        watched = Watched(viewer);
+        await pushAndSettle([outputFrame(2, 'live')]);
+      });
+
+      test('then the core got terminal.attach, sizing at 100 × 30.', () {
+        final (_, params) = core.calls.firstWhere(
+          (call) => call.$1 == 'terminal.attach',
+        );
+        expect(params, {
+          'terminal': 't1',
+          'observe': false,
+          'cols': 100,
+          'rows': 30,
+          'caller': 't9',
+        });
+      });
+
+      test('then the viewer sizes, at the size it attached with.', () {
+        expect(viewer.sizing, isTrue);
+        expect((viewer.cols, viewer.rows), (100, 30));
+        expect(viewer.resizeNotifications, isFalse);
+      });
+
+      test('then its events took none of the output.', () {
+        expect(watched.events, isEmpty);
+      });
+
+      test('then it credited the output as it came.', () {
+        expect(client.credits[2], 'paintlive'.length);
+      });
+
+      test('when it resizes to 90 × 25, then hc gets the size.', () async {
+        viewer.resize(90, 25);
+        await gateway.list();
+
+        expect(client.resizes, [(channel: 2, cols: 90, rows: 25)]);
+      });
+
+      test('when hc ends the stream with the program\'s end, '
+          'then the events bring the end alone.', () async {
+        client.pushFrames([
+          outputFrame(2, ' bye'),
+          closeFrame(2, {'reason': 'killed'}),
+        ]);
+
+        expect(await untilDone(watched.ended, 'the end'), isNull);
+        expect(watched.events, [const HcEnd(reason: 'killed')]);
+      });
+
+      test(
+        'when it closed and resizes, then it sends nothing to hc.',
+        () async {
+          await viewer.close();
+          viewer.resize(90, 25);
+          await gateway.list();
+
+          expect(client.closes, [2]);
+          expect(client.resizes, isEmpty);
+        },
+      );
+    });
+
+    test(
+      'when it attaches with history, '
+      'then it fails with ArgumentError, never sent.',
+      () async {
+        await expectLater(
+          gateway.attach('t1', size: (cols: 100, rows: 30), history: 5),
+          throwsArgumentError,
+        );
+        expect(
+          core.calls.where((call) => call.$1 == 'terminal.attach'),
+          isEmpty,
+        );
+      },
+    );
+
+    for (final (cols, rows) in [(0, 30), (100, 0), (65536, 30), (100, -1)]) {
+      test(
+        'when it attaches at $cols × $rows, '
+        'then it fails with RangeError, never sent.',
+        () async {
+          await expectLater(
+            gateway.attach('t1', size: (cols: cols, rows: rows)),
+            throwsRangeError,
+          );
+          expect(
+            core.calls.where((call) => call.$1 == 'terminal.attach'),
+            isEmpty,
+          );
+        },
+      );
+    }
+
+    test(
+      'when a sizing viewer resizes to 65536 × 30, '
+      'then it throws RangeError and sends nothing.',
+      () async {
+        final viewer = await gateway.attach('t1', size: (cols: 100, rows: 30));
+
+        expect(() => viewer.resize(65536, 30), throwsRangeError);
+        await gateway.list();
+        expect(client.resizes, isEmpty);
+      },
+    );
+  });
+
+  test(
+    'Given a watching viewer, when it resizes, '
+    'then it throws StateError and sends nothing.',
+    () async {
+      final viewer = await gateway.attach('t1');
+
+      expect(() => viewer.resize(90, 25), throwsStateError);
+      await gateway.list();
+      expect(client.resizes, isEmpty);
+    },
+  );
+
   test(
     'Given a gateway not connected, when it attaches, '
     'then it fails with HcUnavailableException, never sent.',

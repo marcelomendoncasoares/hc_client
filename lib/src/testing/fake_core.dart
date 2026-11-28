@@ -176,6 +176,9 @@ final class FakeHcClient {
   /// The stream channels the client sent CLOSE on, in order.
   final closes = <int>[];
 
+  /// The sizes the client sent in RESIZE, in order.
+  final resizes = <({int channel, int cols, int rows})>[];
+
   /// The DATA bytes sent to the client on the event channel.
   var sent = 0;
 
@@ -237,6 +240,14 @@ final class FakeHcClient {
         if (_core.echoClose) {
           _write([HcFrame(frame.channel, HcFrameKind.close, Uint8List(0))]);
         }
+      } else if (frame.kind == HcFrameKind.resize &&
+          frame.payload.length == 4) {
+        final size = ByteData.sublistView(frame.payload);
+        resizes.add((
+          channel: frame.channel,
+          cols: size.getUint16(0, Endian.little),
+          rows: size.getUint16(2, Endian.little),
+        ));
       } else if (frame.channel == 0 && frame.kind == HcFrameKind.data) {
         _onCall(
           (jsonDecode(utf8.decode(frame.payload)) as Map)

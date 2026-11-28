@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0
+
+- `attach(terminal, size: (cols: …, rows: …))`: a sizing viewer, which sizes
+  the terminal instead of watching it, and `HcViewer.resize` to change its
+  size. The terminal takes the size of the sizing viewer that attached or
+  resized last; as each closes, the one before takes over, and with none
+  left, hc's headless size. `HcViewer.sizing` tells the two kinds apart.
+- A sizing viewer takes no output. The client credits what hc sends it as it
+  comes and drops it, so hc holds no backlog for it, and the program's end,
+  which hc sends only after the output before it, still reaches its `events`.
+- `HcFrame.resize` builds a RESIZE frame, and `FakeHcClient.resizes` records
+  the sizes a client sent.
+
 ## 0.2.0
 
 - First release on pub.dev.

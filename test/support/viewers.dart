@@ -38,29 +38,24 @@ final class Watched {
 }
 
 /// What a core answers `terminal.attach` with: [channel], [terminal]'s
-/// record, and resize notifications.
+/// record, and whether resize notifications come, as for a watching viewer
+/// unless told otherwise.
 Map<String, Object?> attachResult(
   int channel,
-  Map<String, Object?> terminal,
-) => {
+  Map<String, Object?> terminal, {
+  bool resizeNotifications = true,
+}) => {
   'channel': channel,
   'terminal': terminal,
-  'resize_notifications': true,
+  'resize_notifications': resizeNotifications,
   'automatic_input': true,
 };
 
 HcFrame outputFrame(int channel, String text) =>
     HcFrame(channel, HcFrameKind.data, utf8.encode(text));
 
-HcFrame resizeFrame(int channel, int cols, int rows) => HcFrame(
-  channel,
-  HcFrameKind.resize,
-  (ByteData(4)
-        ..setUint16(0, cols, Endian.little)
-        ..setUint16(2, rows, Endian.little))
-      .buffer
-      .asUint8List(),
-);
+HcFrame resizeFrame(int channel, int cols, int rows) =>
+    HcFrame.resize(channel, cols, rows);
 
 /// hc's CLOSE: with [end], the program's end; without, a bare one.
 HcFrame closeFrame(int channel, [Map<String, Object?>? end]) => HcFrame(

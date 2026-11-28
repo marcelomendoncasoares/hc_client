@@ -244,14 +244,17 @@ final class HcGateway {
     return terminalsFromJson(listed is Map ? listed['terminals'] : null);
   }
 
-  /// `terminal.attach`, watching only: a viewer of [terminal]'s screen, on
-  /// the live connection, that never types into it or resizes it. Input
-  /// stays on [send] and [keys]. See [HcConnection.attach].
+  /// `terminal.attach`: a viewer of [terminal], on the live connection,
+  /// that never types into it. With no [size] it watches the screen and
+  /// never resizes it; with one, it sizes the terminal and takes no output.
+  /// Input stays on [send] and [keys]. See [HcConnection.attach].
   ///
   /// The viewer ends with an [HcUnavailableException] when the connection
-  /// does: attach again once [connected].
+  /// does, and a sizing one's size goes with it: attach again once
+  /// [connected].
   Future<HcViewer> attach(
     String terminal, {
+    ({int cols, int rows})? size,
     int history = 0,
     String? caller,
     Duration timeout = defaultTimeout,
@@ -260,6 +263,7 @@ final class HcGateway {
     if (connection == null) return Future.error(_notConnected);
     return connection.attach(
       terminal,
+      size: size,
       history: history,
       caller: caller,
       timeout: timeout,

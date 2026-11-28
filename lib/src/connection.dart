@@ -154,20 +154,37 @@ final class HcConnection {
     );
   }
 
-  /// `terminal.attach`, watching only: a viewer of [terminal]'s screen that
-  /// never types into it or resizes it, whatever the other viewers do. Its
-  /// [HcViewer.events] start with the screen as it is and follow it live.
+  /// `terminal.attach`: a viewer of [terminal], which never types into it.
   ///
-  /// [history] adds that many lines of scrollback before the first paint
-  /// (on the main screen only). [caller] names the terminal calling, if one
-  /// does: hc refuses a terminal watching itself. Throws [HcException] as
-  /// hc refuses, such as `not_found` or `finished`, and as [call] does.
+  /// With no [size], it watches: its [HcViewer.events] start with the
+  /// screen as it is and follow it live, and it never resizes the terminal,
+  /// whatever the other viewers do. [history] adds that many lines of
+  /// scrollback before the first paint (on the main screen only).
+  ///
+  /// With a [size], it sizes the terminal instead, and takes no output: see
+  /// [HcViewer.resize]. [history] then has no use and must stay 0. Throws
+  /// [RangeError] for a size outside 1 to 65535.
+  ///
+  /// [caller] names the terminal calling, if one does: hc refuses a
+  /// terminal attaching to itself. Throws [HcException] as hc refuses, such
+  /// as `not_found` or `finished`, and as [call] does.
   Future<HcViewer> attach(
     String terminal, {
+    ({int cols, int rows})? size,
     int history = 0,
     String? caller,
     Duration timeout = const Duration(seconds: 30),
   }) async {
+    if (size != null) {
+      _checkSize(size.cols, size.rows);
+      if (history != 0) {
+        throw ArgumentError.value(
+          history,
+          'history',
+          'a sizing viewer takes no output',
+        );
+      }
+    }
     HcViewer? viewer;
     Object? failure;
     var abandoned = false;
@@ -176,12 +193,18 @@ final class HcConnection {
         'terminal.attach',
         {
           'terminal': terminal,
-          'observe': true,
-          'resize_notifications': true,
-          'history': history,
-          // hc needs a viewer's size, but a watching one's never counts.
-          'cols': 80,
-          'rows': 24,
+          if (size == null) ...{
+            'observe': true,
+            'resize_notifications': true,
+            'history': history,
+            // hc needs a viewer's size, but a watching one's never counts.
+            'cols': 80,
+            'rows': 24,
+          } else ...{
+            'observe': false,
+            'cols': size.cols,
+            'rows': size.rows,
+          },
           'caller': ?caller,
         },
         timeout,
@@ -196,6 +219,7 @@ final class HcConnection {
               this,
               channel,
               record is Map ? record.cast<String, Object?>() : const {},
+              sizing: size != null,
               resizeNotifications: result['resize_notifications'] == true,
             );
           } on FormatException catch (error) {
@@ -325,7 +349,15 @@ final class HcConnection {
     }
     final viewer = _viewers[frame.channel];
     if (viewer != null) {
-      viewer._onFrame(frame);
+      if (viewer.sizing && frame.kind == HcFrameKind.data) {
+        // A sizing viewer takes no output. Credited as it comes, it leaves
+        // hc no backlog to hold, and nothing for the program's end to wait
+        // behind: hc sends the end once the output before it is out.
+        credits[frame.channel] =
+            (credits[frame.channel] ?? 0) + frame.payload.length;
+      } else {
+        viewer._onFrame(frame);
+      }
       return;
     }
     final channel = _channel(frame.channel);
@@ -431,13 +463,15 @@ final class HcSubscription {
   final Stream<HcNotification> notifications;
 }
 
-/// One viewer of a terminal, watching only, from [HcConnection.attach]:
-/// its output, its resizes and its end, in order.
+/// One viewer of a terminal, from [HcConnection.attach]. A watching one
+/// brings the terminal's output, its resizes and its end, in order. A
+/// [sizing] one sizes the terminal, and brings only its end.
 final class HcViewer {
   HcViewer._(
     this._connection,
     this._channel,
     Map<String, Object?> record, {
+    required this.sizing,
     required this.resizeNotifications,
   }) : terminal = HcTerminal.fromJson(record),
        cols = record['cols'] is int ? record['cols'] as int : 0,
@@ -466,13 +500,19 @@ final class HcViewer {
   /// The terminal as it was when the viewer attached.
   final HcTerminal terminal;
 
-  /// The terminal's size when the viewer attached, in cells.
+  /// The terminal's size when the viewer attached, in cells: for a sizing
+  /// viewer, the size it attached with.
   final int cols;
   final int rows;
 
-  /// Whether [events] carry each [HcResize]: always for a terminal on this
-  /// core. For one on another machine whose core can't relay them, they
-  /// don't, and [cols] and [rows] are all the viewer knows of its size.
+  /// Whether this viewer sizes its terminal, attached with a size, rather
+  /// than watching it.
+  final bool sizing;
+
+  /// Whether [events] carry each [HcResize]: for a watching viewer, always
+  /// for a terminal on this core. For one on another machine whose core
+  /// can't relay them, and for a sizing viewer, they don't, and [cols] and
+  /// [rows] are all the viewer knows of its size.
   final bool resizeNotifications;
 
   /// What hc sends this viewer: an [HcResize] and the first paint, then the
@@ -481,10 +521,38 @@ final class HcViewer {
   /// It ends after an [HcEnd] when the program ends, when [close] is
   /// called or the listener cancels, and with an [HcUnavailableException]
   /// when the connection goes or hc ends the stream for another reason.
+  ///
+  /// A sizing viewer's events bring only that end: it takes no output, and
+  /// needs no listener. What hc sends it is credited as it comes and
+  /// dropped, so hc keeps no backlog for it, and its end never waits
+  /// behind one.
   late final Stream<HcViewerEvent> events;
 
-  /// Stops watching: [events] ends, and hc lets the viewer go. Completes
-  /// once hc says it did, or the connection is over.
+  /// Sizes the terminal at [cols] × [rows] cells, for a sizing viewer.
+  ///
+  /// The terminal takes the size of the sizing viewer that attached or
+  /// resized last. When that one goes, it takes the last size of the one
+  /// before, and with none left, hc's headless size (200 × 120 unless set).
+  /// Watching viewers see each new size as an [HcResize], then a fresh
+  /// paint.
+  ///
+  /// Throws [StateError] for a watching viewer, which never sizes, and
+  /// [RangeError] for a size outside 1 to 65535. Does nothing once the
+  /// viewer has ended.
+  void resize(int cols, int rows) {
+    if (!sizing) {
+      throw StateError(
+        'a watching viewer never sizes its terminal: attach with a size',
+      );
+    }
+    _checkSize(cols, rows);
+    if (_ended) return;
+    _connection._write(HcFrame.resize(_channel, cols, rows));
+  }
+
+  /// Lets the terminal go: [events] ends, and hc drops the viewer, which
+  /// for a sizing one hands the size back as [resize] says. Completes once
+  /// hc says it did, or the connection is over.
   Future<void> close() => _closed ??= _close();
 
   Future<void> _close() async {
@@ -527,6 +595,13 @@ final class HcViewer {
     _controller.addError(error);
     unawaited(_controller.close());
   }
+}
+
+/// A size hc takes: a RESIZE frame carries each side in 16 bits, and hc
+/// ignores a side of 0.
+void _checkSize(int cols, int rows) {
+  RangeError.checkValueInInterval(cols, 1, 0xffff, 'cols');
+  RangeError.checkValueInInterval(rows, 1, 0xffff, 'rows');
 }
 
 final class _Channel {
