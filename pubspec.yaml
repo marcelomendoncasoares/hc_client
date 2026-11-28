@@ -3,7 +3,7 @@ description: >-
   An unofficial Dart client for herdr-core (hc): typed calls on its terminals,
   a live mirror of them that survives reconnects and core restarts, and fakes
   for testing.
-version: 0.3.0
+version: 0.4.0
 repository: https://github.com/marcelomendoncasoares/hc_client
 topics:
   - herdr

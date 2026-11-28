@@ -244,10 +244,10 @@ final class HcGateway {
     return terminalsFromJson(listed is Map ? listed['terminals'] : null);
   }
 
-  /// `terminal.attach`: a viewer of [terminal], on the live connection,
-  /// that never types into it. With no [size] it watches the screen and
-  /// never resizes it; with one, it sizes the terminal and takes no output.
-  /// Input stays on [send] and [keys]. See [HcConnection.attach].
+  /// `terminal.attach`: a viewer of [terminal], on the live connection.
+  /// With no [size] it watches the screen, and never types into it or
+  /// resizes it; with one, it sizes the terminal, can type into it with
+  /// [HcViewer.input], and takes no output. See [HcConnection.attach].
   ///
   /// The viewer ends with an [HcUnavailableException] when the connection
   /// does, and a sizing one's size goes with it: attach again once

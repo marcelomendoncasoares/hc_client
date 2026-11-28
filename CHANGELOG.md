@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+- `HcViewer.input`: a sizing viewer types into its terminal as a terminal
+  emulator does, every byte as it is, `?`, AltGr's characters, control bytes
+  and pastes included. hc takes it as a person typing: the viewer then sizes
+  the terminal, as after `resize`, and `send` and `keys` into the terminal
+  wait until the typing pauses. Input longer than a frame holds goes in
+  several.
+- `FakeHcClient.inputs` records the frames a client typed on each channel.
+
 ## 0.3.0
 
 - `attach(terminal, size: (cols: …, rows: …))`: a sizing viewer, which sizes

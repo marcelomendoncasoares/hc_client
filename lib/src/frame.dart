@@ -3,8 +3,10 @@ import 'dart:typed_data';
 
 import 'errors.dart';
 
-/// The kinds of hc frames. The client uses DATA, CREDIT, CLOSE and, for a
-/// viewer, RESIZE; the others carry an attached viewer's input.
+/// The kinds of hc frames. The client uses DATA (calls on channel 0, and a
+/// viewer's output and input on its own), CREDIT, CLOSE and, for a viewer,
+/// RESIZE; it never sends the others, which carry a terminal emulator's
+/// focus, display facts and automatic replies.
 abstract final class HcFrameKind {
   static const data = 0;
   static const credit = 1;

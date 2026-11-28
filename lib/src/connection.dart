@@ -154,16 +154,18 @@ final class HcConnection {
     );
   }
 
-  /// `terminal.attach`: a viewer of [terminal], which never types into it.
+  /// `terminal.attach`: a viewer of [terminal].
   ///
   /// With no [size], it watches: its [HcViewer.events] start with the
-  /// screen as it is and follow it live, and it never resizes the terminal,
-  /// whatever the other viewers do. [history] adds that many lines of
-  /// scrollback before the first paint (on the main screen only).
+  /// screen as it is and follow it live, and it never types into the
+  /// terminal or resizes it, whatever the other viewers do. [history] adds
+  /// that many lines of scrollback before the first paint (on the main
+  /// screen only).
   ///
-  /// With a [size], it sizes the terminal instead, and takes no output: see
-  /// [HcViewer.resize]. [history] then has no use and must stay 0. Throws
-  /// [RangeError] for a size outside 1 to 65535.
+  /// With a [size], it sizes the terminal instead, can type into it, and
+  /// takes no output: see [HcViewer.resize] and [HcViewer.input]. [history]
+  /// then has no use and must stay 0. Throws [RangeError] for a size outside
+  /// 1 to 65535.
   ///
   /// [caller] names the terminal calling, if one does: hc refuses a
   /// terminal attaching to itself. Throws [HcException] as hc refuses, such
@@ -465,7 +467,8 @@ final class HcSubscription {
 
 /// One viewer of a terminal, from [HcConnection.attach]. A watching one
 /// brings the terminal's output, its resizes and its end, in order. A
-/// [sizing] one sizes the terminal, and brings only its end.
+/// [sizing] one sizes the terminal and types into it, and brings only its
+/// end.
 final class HcViewer {
   HcViewer._(
     this._connection,
@@ -548,6 +551,44 @@ final class HcViewer {
     _checkSize(cols, rows);
     if (_ended) return;
     _connection._write(HcFrame.resize(_channel, cols, rows));
+  }
+
+  /// Types [bytes] into the terminal, for a sizing viewer, as a terminal
+  /// emulator sends a key press or a paste: every byte as it is, `?`,
+  /// AltGr's characters and control bytes included. A named key goes as the
+  /// bytes a terminal sends for it in the program's modes, which a watching
+  /// viewer's output sets: Enter `\r`, Backspace `\x7f`, up `\x1b[A`, or
+  /// `\x1bOA` once the program asked for application cursor keys. A paste
+  /// goes between `\x1b[200~` and `\x1b[201~` once it asked for bracketed
+  /// paste.
+  ///
+  /// hc takes it as a person typing. It makes this viewer the one that
+  /// sizes the terminal, as [resize] does, and the `send` and `keys` calls
+  /// into the terminal wait until the typing pauses, 3 s unless hc's
+  /// `HC_QUIET_MS` says otherwise. While one of those goes in, hc holds
+  /// what this types and lets it in after.
+  ///
+  /// Throws [StateError] for a watching viewer, whose input hc drops. Does
+  /// nothing once the viewer has ended.
+  void input(List<int> bytes) {
+    if (!sizing) {
+      throw StateError(
+        'a watching viewer never types into its terminal: attach with a size',
+      );
+    }
+    if (_ended || bytes.isEmpty) return;
+    final all = Uint8List.fromList(bytes);
+    // hc ends a connection that sends a frame above its limit.
+    for (var at = 0; at < all.length; at += HcFrame.maxPayload) {
+      final end = at + HcFrame.maxPayload;
+      _connection._write(
+        HcFrame(
+          _channel,
+          HcFrameKind.data,
+          Uint8List.sublistView(all, at, end < all.length ? end : all.length),
+        ),
+      );
+    }
   }
 
   /// Lets the terminal go: [events] ends, and hc drops the viewer, which

@@ -189,6 +189,61 @@ void main() {
     });
   });
 
+  group('Given a terminal that reads a line, sized by two viewers, the '
+      'second attached last,', () {
+    late HcTerminal terminal;
+    late HcViewer first;
+    late HcViewer second;
+
+    setUpAll(() async {
+      terminal = await gateway.run(
+        argv: ['sh', '-c', r'echo ready; read line; echo "got <$line>"'],
+        cwd: core.home,
+        labels: demo,
+      );
+      await untilRead(gateway, terminal.address, 'ready');
+      first = await gateway.attach(
+        terminal.address,
+        size: (cols: 100, rows: 30),
+      );
+      second = await gateway.attach(
+        terminal.address,
+        size: (cols: 120, rows: 40),
+      );
+    });
+
+    tearDownAll(() async {
+      await first.close();
+      await second.close();
+    });
+
+    group('when the first types "?€" and Enter,', () {
+      late (int, int) sizeBefore;
+      late (int, int) sizeAfter;
+
+      setUpAll(() async {
+        sizeBefore = await sizeOf(terminal.address);
+        first.input(utf8.encode('?€\r'));
+        await untilRead(gateway, terminal.address, 'got <');
+        sizeAfter = await sizeOf(terminal.address);
+      });
+
+      test('then the program read the line as typed.', () async {
+        final screen = await gateway.read(terminal.address, lines: 0);
+
+        expect(screen.text, contains('got <?€>'));
+      });
+
+      test(
+        'then the first sized the terminal again, as the latest to type.',
+        () {
+          expect(sizeBefore, (120, 40));
+          expect(sizeAfter, (100, 30));
+        },
+      );
+    });
+  });
+
   group('Given a sizing viewer of a terminal that prints 1 MB on a line, '
       'then exits,', () {
     late Watched sized;

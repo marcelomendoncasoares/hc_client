@@ -365,6 +365,42 @@ void main() {
         expect(client.resizes, [(channel: 2, cols: 90, rows: 25)]);
       });
 
+      test('when it types "?", "€" and a bracketed paste, '
+          'then hc gets each as typed, on its channel.', () async {
+        viewer
+          ..input('?'.codeUnits)
+          ..input(utf8.encode('€'))
+          ..input(utf8.encode('\x1b[200~a\nb\x1b[201~'));
+        await gateway.list();
+
+        expect(client.inputs, {
+          2: [
+            '?'.codeUnits,
+            utf8.encode('€'),
+            utf8.encode('\x1b[200~a\nb\x1b[201~'),
+          ],
+        });
+      });
+
+      test('when it types more than a frame holds, '
+          'then hc gets it all, in frames it takes.', () async {
+        viewer.input(Uint8List(HcFrame.maxPayload + 1));
+        await gateway.list();
+
+        expect(client.inputs[2]!.map((frame) => frame.length), [
+          HcFrame.maxPayload,
+          1,
+        ]);
+        expect(gateway.connected, isTrue);
+      });
+
+      test('when it types nothing, then hc gets no frame.', () async {
+        viewer.input(const []);
+        await gateway.list();
+
+        expect(client.inputs, isEmpty);
+      });
+
       test('when hc ends the stream with the program\'s end, '
           'then the events bring the end alone.', () async {
         client.pushFrames([
@@ -377,14 +413,17 @@ void main() {
       });
 
       test(
-        'when it closed and resizes, then it sends nothing to hc.',
+        'when it closed, and resizes and types, then it sends nothing to hc.',
         () async {
           await viewer.close();
-          viewer.resize(90, 25);
+          viewer
+            ..resize(90, 25)
+            ..input('?'.codeUnits);
           await gateway.list();
 
           expect(client.closes, [2]);
           expect(client.resizes, isEmpty);
+          expect(client.inputs, isEmpty);
         },
       );
     });
@@ -443,6 +482,18 @@ void main() {
       expect(() => viewer.resize(90, 25), throwsStateError);
       await gateway.list();
       expect(client.resizes, isEmpty);
+    },
+  );
+
+  test(
+    'Given a watching viewer, when it types, '
+    'then it throws StateError and sends nothing.',
+    () async {
+      final viewer = await gateway.attach('t1');
+
+      expect(() => viewer.input('?'.codeUnits), throwsStateError);
+      await gateway.list();
+      expect(client.inputs, isEmpty);
     },
   );
 

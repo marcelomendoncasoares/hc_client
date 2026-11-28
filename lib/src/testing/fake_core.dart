@@ -179,6 +179,10 @@ final class FakeHcClient {
   /// The sizes the client sent in RESIZE, in order.
   final resizes = <({int channel, int cols, int rows})>[];
 
+  /// The DATA frames the client sent on each stream channel: a sizing
+  /// viewer's input, frame by frame.
+  final inputs = <int, List<Uint8List>>{};
+
   /// The DATA bytes sent to the client on the event channel.
   var sent = 0;
 
@@ -248,6 +252,8 @@ final class FakeHcClient {
           cols: size.getUint16(0, Endian.little),
           rows: size.getUint16(2, Endian.little),
         ));
+      } else if (frame.channel != 0 && frame.kind == HcFrameKind.data) {
+        (inputs[frame.channel] ??= []).add(frame.payload);
       } else if (frame.channel == 0 && frame.kind == HcFrameKind.data) {
         _onCall(
           (jsonDecode(utf8.decode(frame.payload)) as Map)

@@ -27,8 +27,8 @@ and it depends only on the Dart SDK.
 - **`attach`**, a viewer that only watches: a terminal's screen as it is,
   then its live output, colours included, for a terminal emulator to draw.
   It never types or resizes, whatever the terminal's other viewers do.
-  Attached with a `size`, a viewer sizes the terminal instead, and takes no
-  output.
+  Attached with a `size`, a viewer sizes the terminal instead, types into it
+  as a person would, and takes no output.
 - **`HcConnection`**, one framed connection to a core: JSON-RPC requests, and
   the event subscription on its own channel, with credit.
 - **Typed errors.** `HcException` carries hc's stable `kind`, such as
@@ -98,7 +98,7 @@ The viewer ends after `HcEnd`, on `viewer.close()` or a cancelled listener,
 and with `HcUnavailableException` when the connection goes: attach again once
 the gateway is back. Typing stays on `send` and `keys`.
 
-To size a terminal, as the window that shows it would:
+To size a terminal and type into it, as the window that shows it would:
 
 ```dart
 final sizer = await gateway.attach(
@@ -106,6 +106,7 @@ final sizer = await gateway.attach(
   size: (cols: 120, rows: 40),
 );
 sizer.resize(100, 30); // as the window narrows
+sizer.input(utf8.encode('?')); // as you type
 await sizer.close(); // the size goes back
 ```
 
@@ -115,6 +116,13 @@ none left, hc's headless size, 200 × 120 unless set. Watching viewers get
 each new size as `HcResize`, then a fresh paint. A sizing viewer takes no
 output: the client credits what hc sends it and drops it, so hc holds no
 backlog for it, and its `events` bring only the program's end.
+
+A sizing viewer also types: `input` sends bytes as a terminal emulator
+would, each key in the program's modes and a paste bracketed when it asked.
+hc takes them as a person typing. The viewer becomes the one whose size
+counts, as after `resize`, and `send` and `keys` into the terminal wait until
+the typing pauses, 3 s by default. So send named keys as bytes too: a key
+sent with `keys` lands after what was typed after it.
 
 `example/hc_client_example.dart` follows a core's terminals and prints each
 status as it changes: `dart run example/hc_client_example.dart app=demo`.
